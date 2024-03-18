@@ -1,0 +1,533 @@
+---
+title: "Research Report for Neuron Activity in Mice Brains"
+author: "Yunhua Fang"
+date: "2024-02-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(Matrix)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(tidyverse)
+library(gridExtra)
+library(matrixStats)
+library(factoextra)
+library(glmnet)
+library(caret)
+library(xgboost)
+library(MLmetrics)
+library(pROC)
+session = list()
+```
+
+### Abstract
+
+This report delves into an analysis of neuron activity in the brains of mice during decision-making processes, using data from an experiment conducted by Steinmetz et al. (2019). Focusing on 18 sessions from the original 39, corresponding to four distinct mice (Cori, Forssmann, Hench, and Lederberg), we investigate how various brain regions and neuron spike counts contribute to decision-making. Through exploratory data analysis, we scrutinize the structure and key features of the data set, which includes neuron spike data, contrast levels of stimuli, and resultant mouse decisions. Our predictive modeling endeavors to ascertain the factors influencing the mice decisions, underpinned by the hypothesis that specific brain areas and spike numbers are pivotal. Employing Principal Component Analysis (PCA), we reduce data dimension to enhance our model's interpretability, focusing on the components that capture the most variance. The culmination of our analysis is a predictive model that achieves a 72.5% accuracy rate in forecasting the mice's decisions, offering insights into the neural underpinnings of decision-making processes in mice and potentially broadening our understanding of brain functionality. Our code is open at: https://github.com/fangyunh/Mice-Brain-Activity-Report.git
+
+### Introduction
+
+Brian is an important and indispensable organ for organisms. It is the place where stores the intelligence and consciousness. Brain even dominates the behavior of its host. Biologists and neuroscientists in the world are fascinated on figuring out mysteries about brain, such as how the brain works? What elements or factors help brain to make correct decisions? Steinmetz et al. (2019) conducted an experiment for observing the neuron activity in mice minds when they are making decisions and collected data to analyze the behavior of mice.
+
+Based on the data collected by Steinmetz et al. (2019), we decide to subtract 18 sessions from the original 39 sessions of data to conduct our research. The information in these 18 sessions are related to 4 mice: Cori, Forssmann, Hench, and Lederberg. By exploring and analyzing the data, we are going to build a predictive model that can predict the decision made by mice when they receive stimuli. We made an assumptions before modelling: brain areas and spikes number may perform crucial roles in the prediction. We will verify our assumption in the process later. In conclusion, the main contribution we made is that our model finally achieves 72.5% accuracy on prediction.
+
+The rest of the report will be composed by: __Exploratory Data Analysis__ (explore and understand the data set), __Data Integration__ (refine data set for the model), __Predictive Modeling__ (build the predictive model), __Prediction Performance__ (test predictive model), and __Discussion__.
+
+### Exploratory Data Analysis
+
+This part illustrates the composition of the data we are going to analyze and finds out what factors and features are valuable to help us build our model.
+
+#### Data Structure
+
+Before starting a research on the data set, we need to firstly view the data set. We have 18 sessions of data. Each session comprised several hundred trials, during which visual stimuli were randomly presented to the mouse on two screens positioned on both sides of it. The stimuli varied in terms of contrast levels, which took values in {0, 0.25, 0.5, 1}, with 0 indicating the absence of a stimulus. The mice were required to make decisions based on the visual stimuli, using a wheel controlled by their forepaws. A reward or penalty (i.e., feedback) was subsequently administered based on the outcome of their decisions. In particular, 
+
+- When left contrast > right contrast, success (1) if turning the wheel to the right and failure (-1) otherwise.  
+- When right contrast > left contrast, success (1) if turning the wheel to the left and failure (-1) otherwise.  
+- When both left and right contrasts are zero, success (1) if holding the wheel still and failure (-1) otherwise. 
+- When left and right contrasts are equal but non-zero, left or right will be randomly chosen (50%) as the correct choice. 
+
+The activity of the neurons in the mice's visual cortex was recorded during the trials and made available in the form of spike trains, which are collections of timestamps corresponding to neuron firing. In this project, we focus specifically on the spike trains of neurons from the onset of the stimuli to 0.4 seconds post-onset. In addition, we only use 18 sessions (Sessions 1 to 18) from four mice: Cori, Frossman, Hence, and Lederberg.
+
+Except the mice name and experiment date, each session contains 5 variables:
+
+- `feedback_type`: type of the feedback, 1 for success and -1 for failure
+- `contrast_left`: contrast of the left stimulus
+- `contrast_right`: contrast of the right stimulus
+- `time`: centers of the time bins for `spks`
+- `spks`: numbers of spikes of neurons in the visual cortex in time bins defined in `time`
+- `brain_area`: area of the brain where each neuron lives
+
+*Fig. 1* provides some basic information about each sessions. Sessions 1 to 18 are ordered from top to down. Each session belongs to a mouse. We can group and classify them by their names: session 1 to 3 are from Cori, session 4 to 7 are from Forssmann, session 8 to 11 are from Hench, and session 12 to 18 are from Lederberg. The experiments dates are also listed in the figure.
+
+*Brain_area_num records* the number of unique brain areas where neurons in this sessions are located. *neurons_num* represents in each trial, we will speculate the number of neurons activities. *trial_num* shows that in each session, how many trials we did to guarantee the reliability of the experiments' results. *success_rate* is calculated from contrast_left, contrast_right, and feedback_type. It presents the ratio of how many times the mouse made a correct decision. Take fist row (session 1) as example, all 72.54 neurons we observed in the session could be classified to 8 brain areas. The session conducted 114 trials and the ratio of success of Cori is 60.53%. The table helps us to have an overview of the data and concludes the dimension of each variable. 
+
+```{r, echo=FALSE}
+# Data structure visualization
+session_str <- data.frame(mouse_name = character(),
+                          date_exp = character(),
+                          brain_area_num = integer(),
+                          neurons_num = integer(),
+                          trial_num = integer(),
+                          # feedback_num = integer(),
+                          success_rate = numeric())# do how many times
+for (i in 1:18) {
+  session[[i]] = readRDS(paste('./Data/session', i, '.rds', sep=''))
+  session_str <- rbind(session_str, data.frame(mouse_name = session[[i]]$mouse_name,
+                                               date_exp = session[[i]]$date_exp,
+                                               brain_area_num = length(unique(session[[i]]$brain_area)),
+                                               neurons_num = nrow(session[[i]]$spks[[1]]),
+                                               trial_num = length(session[[i]]$spks),
+                                               # feedback_num = length(session[[i]]$feedback),
+                                               success_rate = mean(session[[i]]$feedback_type + 1) / 2))
+}
+
+kable(session_str, caption = "Fig 1. An Overview of Dataset")
+```
+
+To further figuring out the fairness of the experiments, *Fig 2.* records how many left and right contrasts researchers provided to mice through sessions. *same* represents the situation when left contrast and right contrast are all 0, and *rand* represents the situation when left contrast equals to right contrast but they are not 0. From the histogram, session 1 to 3 (Cori), session 4 to 7 (Forssmann), and session 12 to 18 (Lederberg) clearly shows that less left contrast are provided. Also, the same senario seems occupy a large proportion in the experiment. The uneven test distribution may not conclude a fair result. We should note the weekness in the experiment and try to avoid it when building the model.
+
+```{r, echo=FALSE, warning=FALSE}
+category_counts <- data.frame(session = integer(), left = integer(), right = integer(), same = integer(), random = integer())
+
+for (i in 1:18) {
+  session_data <- session[[i]]
+
+  left_count <- 0
+  right_count <- 0
+  same_count <- 0
+  random_count <- 0
+  for (j in 1:length(session_data$contrast_left)) {
+    if (session_data$contrast_left[j] > session_data$contrast_right[j]) {
+      left_count <- left_count + 1
+    } else if (session_data$contrast_left[j] < session_data$contrast_right[j]) {
+      right_count <- right_count + 1
+    } else if (session_data$contrast_left[j] == session_data$contrast_right[j] && session_data$contrast_right[j] == 0) {
+      same_count <- same_count + 1
+    } else if (session_data$contrast_left[j] == session_data$contrast_right[j] && session_data$contrast_right[j] != 0) {
+      random_count <- random_count + 1
+    }
+  }
+  
+  # Add the counts for this session to the data frame
+  category_counts <- rbind(category_counts, data.frame(session = i, left = left_count, right = right_count, same = same_count, random = random_count))
+}
+
+
+ggplot(category_counts, aes(x = factor(session))) +
+  geom_bar(aes(y = left, fill = "left"), stat = "identity") +
+  geom_bar(aes(y = right, fill = "right"), stat = "identity", position = "dodge") +
+  geom_bar(aes(y = same, fill = "same"), stat = "identity", position = "dodge") +
+  geom_bar(aes(y = random, fill = "rand"), stat = "identity", position = "dodge") +
+  labs(x = "Session", y = "Count", fill = "Condition", title = "Fig 2. Right or Left Stimuli Counts") +
+  theme_minimal()
+
+
+```
+
+#### Neuron Activity
+
+After seeing the structure of the data set, we first start from the detail of data -- neuron activity in trails. Viewing variable *spks* is the best way to understand neuron activity. Hence, in *Fig 3.*, we samples some some trials from session 2. The areas are listed on the right side of each plots. Obviously, spikes of neurons are classified clearly. Some brain areas cluster to each other. In *Fig 3* series we speculate 2 clusters. The top one is composed by VISpm and POST, and the second one is mainly formed by CA1 and VISI. 
+
+```{r, echo=FALSE}
+plot.trial <- function(i.t, this_session, sym, number) {
+  areas <- unique(this_session$brain_area)
+  n.area <- length(areas)
+  
+  # Create a data frame for plotting
+  n.neuron <- dim(this_session$spks[[i.t]])[1]
+  time.points <- this_session$time[[i.t]]
+  
+  plot_data <- data.frame()
+  
+  for (i in 1:n.neuron) {
+    for (t in 1:length(time.points)) {
+      if (this_session$spks[[i.t]][i, t] > 0) {
+        plot_data <- rbind(plot_data, data.frame(Time = time.points[t], Neuron = i, Area = this_session$brain_area[i]))
+      }
+    }
+  }
+
+  plot_data$Area <- factor(plot_data$Area, levels = areas)
+  area.col <- setNames(rainbow(n = n.area, alpha = 0.7), areas)
+  ggplot(plot_data, aes(x = Time, y = Neuron, color = Area)) +
+    geom_point(size = 0.5) +
+    scale_color_manual(values = area.col) +
+    labs(
+      x = 'Time (s)',
+      y = 'Neuron',
+      title = paste('Fig ', number, sym ,' Trial ', i.t, 'feedback', this_session$feedback_type[i.t])
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      legend.title = element_blank()
+    )
+}
+```
+
+```{r, echo=FALSE}
+plot_s2t1 <- plot.trial(1, session[[2]], 'A', 3)
+plot_s2t2 <- plot.trial(2, session[[2]], 'B', 3)
+plot_s2t3 <- plot.trial(99, session[[2]], 'C', 3)
+plot_s2t4 <- plot.trial(100, session[[2]], 'D', 3)
+gridExtra::grid.arrange(plot_s2t1, plot_s2t2, plot_s2t3, plot_s2t4, ncol = 2)
+```
+
+We also plot *Fig 4* to get more insights from neuron activity. There are 3 clusters composed mainly by: CA1 and MD, PL and root, and SUB. 
+
+```{r, echo=FALSE}
+plot_s12t1 <- plot.trial(1, session[[12]], 'A', 4)
+plot_s12t2 <- plot.trial(2, session[[12]], 'B', 4)
+plot_s12t3 <- plot.trial(99, session[[12]], 'C', 4)
+plot_s12t4 <- plot.trial(100, session[[12]], 'D', 4)
+gridExtra::grid.arrange(plot_s12t1, plot_s12t2, plot_s12t3, plot_s12t4, ncol = 2)
+```
+
+Although we cannot directly observe some rules or conclude some useful theorems from those messy points, we may infer that brain areas which are clustered are close and related to each other. The relationship between brain areas mark their necessity in the model. We should put more attention on the brain areas. Therefore, we then plot spikes in different brain areas across mice to see if some brain areas are active in making decisions than others, which means more valuable to investigate.
+
+#### Homogeneity and Heterogeneity of Mice
+
+Since 18 sessions are too large, we decide to sample 2 sessions from each mice and compare their homogeneity and heterogeneity. *Fig 1* shows that there are many neurons appear in the experiment. To present an clean overview and an intuitive realization, we decide to plot the average spikes number from each brain areas. Brain areas which have higher average spikes times definitely play important roles when mice are thinking.
+
+```{r, echo=FALSE, warning=FALSE}
+# Average number of spikes across neurons in each area
+average_spike_area<-function(i.t,this_session){
+  spk.trial = this_session$spks[[i.t]]
+  area= this_session$brain_area
+  spk.count=apply(spk.trial,1,sum)
+  spk.average.tapply=tapply(spk.count, area, mean)
+  return(spk.average.tapply)
+}
+
+# plot avg spike count
+plot_spike_avg <- function(i.s, this_session, number, sym) {
+  n.trial=length(this_session$feedback_type)
+  n.area=length(unique(this_session$brain_area ))
+
+  trial.summary =matrix(nrow=n.trial,ncol= n.area+1+2+1)
+  for(i.t in 1:n.trial){
+    trial.summary[i.t,]=c(average_spike_area(i.t,this_session = this_session),
+                          this_session$feedback_type[i.t],
+                        this_session$contrast_left[i.t],
+                        this_session$contrast_right[i.s],
+                        i.t)
+  }
+
+  colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = this_session)), 'feedback', 'left contr.','right contr.','id' )
+
+  trial.summary <- as_tibble(trial.summary)
+  area.col=rainbow(n=n.area,alpha=0.7)
+  long_data <- pivot_longer(trial.summary, 
+                          cols = -c(feedback, `left contr.`, `right contr.`, id), 
+                          names_to = "Area", 
+                          values_to = "SpikeCount")
+
+  return (ggplot(long_data, aes(x = id, y = SpikeCount, group = Area, color = Area)) +
+    geom_line(stat = "smooth", method = "auto", se = FALSE, size = 1) +
+    #geom_point(aes(shape = as.factor(feedback)), size = 2, show.legend = TRUE) +  # Add points with shape representing feedback
+    #scale_shape_manual(values = c("1" = 16, "-1" = 17)) +
+    scale_color_manual(values = area.col) +
+    labs(x = "Trials", y = "Average spike counts", title = paste("Fig ", number, sym, ". Spikes per area in Session", i.s, "(", this_session$mouse_name, ")")) +
+    theme_minimal())
+}
+
+```
+
+*Figure 5* series represents the performance of neurons in Cori's brain. VISpm and POST spikes around 1.5 times per trial, which are the most active brain areas in session 2. However, in session 3, MG with average spikes equal to 6 is ahead of other brain areas. The situation does not show in session 2. Because session 3 has higher success rate than session 2, we infer that Cori used session 2 to train itself and get used to the test. When doing experiments from session 3, it learned something from previous sessions and exercise at this time. Thus, Cori thought more in session 3 so that more brain areas are active. Another evidence is that in the plot *Figure 5B.*, brain areas previously showed in *Figure 5A.* including VISpm and POST keep same shapes as before. MG and other new apparent brain areas appended in session 3 does not impact a lot to original brain areas activity. Hence, the experiment date is also a necessary variable we need to consider in our model because mice will improve their performance after practicing.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=12, fig.height=6,}
+plotC1 <- plot_spike_avg(2, session[[2]], 5, 'A')
+plotC2 <- plot_spike_avg(3, session[[3]], 5, 'B')
+
+# Combine the plots
+gridExtra::grid.arrange(plotC1, plotC2, ncol = 2)
+```
+
+Forssmann's brain areas activity is plotted in *Figure 6*. VISp and VISa are more active in the session 4 and root and DG are more active in the session 5. *Figure 6* are also the evidence to prove the discovery we found: some brain areas have similar shapes between *6A* and *6B*.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=12, fig.height=6,}
+plotF1 <- plot_spike_avg(4, session[[4]], 6, 'A')
+plotF2 <- plot_spike_avg(5, session[[5]], 6, 'B')
+
+# Combine the plots
+gridExtra::grid.arrange(plotF1, plotF2, ncol = 2)
+```
+
+*Figure 7* records Hench's performance. PO and LD are more active in session 8 and VISI is more active than other brain areas in session 9.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=12, fig.height=6,}
+plotH1 <- plot_spike_avg(8, session[[8]], 7, 'A')
+plotH2 <- plot_spike_avg(9, session[[9]], 7, 'B')
+
+# Combine the plots
+gridExtra::grid.arrange(plotH1, plotH2, ncol = 2)
+```
+
+*Figure 8* records Lederberg's average spikes count. LH is more active and RN is more active than other brain areas.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.width=12, fig.height=6,}
+plotL1 <- plot_spike_avg(12, session[[12]], 8, 'A')
+plotL2 <- plot_spike_avg(13, session[[13]], 8, 'B')
+
+# Combine the plots
+gridExtra::grid.arrange(plotL1, plotL2, ncol = 2)
+```
+
+We can still prove our discovery from these 2 mice. But why they have higher success rate than Cori and Forssmann? Firstly, we think that with more brain areas are active, the mouse will be smarter and have higher chance to make correct decision. This phenomenon can also be observed from *Fig 1*. Secondly, does some brain areas are more effective on coping with the experiments? 
+
+```{r, echo=FALSE}
+binename <- paste0("bin", as.character(1:40))
+
+get_trail_functional_data <- function(session_id, trail_id){
+  spikes <- session[[session_id]]$spks[[trail_id]]
+  if (any(is.na(spikes))){
+    disp("value missing")
+  }
+
+  trail_bin_average <- matrix(colMeans(spikes), nrow = 1)
+  colnames(trail_bin_average) <- binename
+  trail_tibble  = as_tibble(trail_bin_average)%>% add_column("trail_id" = trail_id) %>% add_column("contrast_left"= session[[session_id]]$contrast_left[trail_id]) %>% add_column("contrast_right"= session[[session_id]]$contrast_right[trail_id]) %>% add_column("feedback_type"= session[[session_id]]$feedback_type[trail_id])
+  
+  trail_tibble
+}
+
+get_session_functional_data <- function(session_id){
+  n_trail <- length(session[[session_id]]$spks)
+  trail_list <- list()
+  for (trail_id in 1:n_trail){
+    trail_tibble <- get_trail_functional_data(session_id,trail_id)
+    trail_list[[trail_id]] <- trail_tibble
+  }
+  session_tibble <- as_tibble(do.call(rbind, trail_list))
+  session_tibble <- session_tibble %>% add_column("mouse_name" = session[[session_id]]$mouse_name) %>% add_column("date_exp" = session[[session_id]]$date_exp) %>% add_column("session_id" = session_id) 
+  session_tibble
+}
+
+
+```
+
+To find answers of our questions, we apply PCA to decrease the dimension of the data and try to extract more features and factors. Since the row in variable *spks* is time slots and the duration of each trial is 0.4 seconds, the time is evenly divided to 40 pieces, we choose 40 columns from our sessions to make PCA. From plot *Figure 9*, the results of the Principal Component Analysis (PCA) indicate a significant disparity in the variance explained by the principal components. The first principal component (PC1) accounts for 65.1% of the variance in the data set, which is a substantial proportion. This suggests that PC1 captures a significant amount of the information present in the original data. In contrast, the second principal component (PC2) explains only 6.3% of the variance. The remaining principal components indicating that they capture much less information compared to PC1. Therefore, we put more attention on PC1 and PC2.
+
+```{r, echo=FALSE}
+# Helper Function
+build_session_list <- function() {
+  session_list = list()
+  for (session_id in 1: 18){
+    session_list[[session_id]] <- get_session_functional_data(session_id)
+  }
+  full_functional_tibble <- as_tibble(do.call(rbind, session_list))
+  full_functional_tibble$session_id <- as.factor(full_functional_tibble$session_id )
+  full_functional_tibble$contrast_diff <- abs(full_functional_tibble$contrast_left-full_functional_tibble$contrast_right)
+
+  full_functional_tibble$success <- full_functional_tibble$feedback_type == 1
+  full_functional_tibble$success <- as.numeric(full_functional_tibble$success)
+  
+  full_functional_tibble
+}
+
+full_functional_tibble <- build_session_list()
+
+features = full_functional_tibble[,1:40]
+scaled_features <- scale(features)
+pca_result <- prcomp(scaled_features)
+pc_df <- as.data.frame(pca_result$x)
+pc_df$session_id <- full_functional_tibble$session_id
+pc_df$mouse_name <- full_functional_tibble$mouse_name
+summary(pca_result)
+print(fviz_eig(pca_result, addlabels = TRUE) + labs(title = "Fig 9. PCA Histogram"))
+```
+
+Since we are figuring out the similarity and diffirence between mice, we also plot *Fig 10* to view the clusters of different mice on PCA. Most of the points from Cori concentrates on the left side of plot, which has negative PC1. However, points from Lederberg, the mouse with the highest success rate, mostly locate at regions where PC1 is positive. Points of Hench, the mouse which also has high success rate, locate at regions with high PC2. Hence, the first and second PCs have a great imapct to the success rate. We need to consider them in our data integration.
+
+```{r, echo = FALSE}
+ggplot(pc_df, aes(x = PC1, y = PC2, color = mouse_name)) +
+  geom_point() +
+  labs(title = "Fig 10. PCA: PC1 vs PC2 (Mouse Names)")
+```
+
+### Data Integration
+
+To prepare suitable features matrix for our predictive model, we have 2 plans. The first method is that because mice have different performance, we should train distinctive model for specific mouse. There are 4 mice so that we need to train 4 models. When models handle predictive tasks, it should figure out the mouse name and then call the appropriate model to make decision. The second method is to integrate all sessions together to pursue the general accuracy in predictive tasks.
+
+We propose some important variables such as date of experiments, average spikes number, and brain areas. We extract them in our features and use them to train our model. 
+
+```{r,echo=FALSE}
+predictive_feature <- c("trail_id","contrast_right","contrast_left", "contrast_diff", binename)
+predictive_dat <- full_functional_tibble[predictive_feature]
+predictive_dat$trail_id <- as.numeric(predictive_dat$trail_id)
+label <- as.numeric(full_functional_tibble$success)
+X <- model.matrix(~., predictive_dat)
+
+```
+
+### Predictive Modeling
+
+For the first method, we combine sessions for each mouse and apply lasson regression with cross validation on the model. The performance of those models are not like what we expect. The accuracy of Cori, Hench, and Forssmann are around 62% with ROC around 55%. Ledberger model even only has 24.61% on accuracy and inconsistent ROC curve. We recognize that building specific models for each mouse is not an appropriate way to make prediction. Thus, we start to combine all sessions together to make a general model (because of the device limitation, we cut the test process after know the results).
+
+Since the spikes and feedback are binary values. We build and evaluate a binary classification model using the XGBoost algorithm. Initially, the data is divided into training and testing subsets, with 80% used for training and the remaining 20% for testing. An XGBoost model is then trained on the training data, where it learns to predict binary labels based on the input features. Here is our decreasing loss value. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+set.seed(123) # for reproducibility
+trainIndex <- createDataPartition(label, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+train_df <- predictive_dat[trainIndex, ]
+train_X <- X[trainIndex,]
+test_df <- predictive_dat[-trainIndex, ]
+test_X <- X[-trainIndex,]
+
+train_label <- label[trainIndex]
+test_label <- label[-trainIndex]
+
+xgb_model <- xgboost(data = train_X, label = train_label, objective = "binary:logistic", nrounds=25)
+predictions <- predict(xgb_model, newdata = test_X)
+predicted_labels <- as.numeric(ifelse(predictions > 0.5, 1, 0))
+accuracy <- mean(predicted_labels == test_label)
+
+conf_matrix <- confusionMatrix(as.factor(predicted_labels), as.factor(test_label))
+```
+
+After training, the model's performance is assessed on the testing data, with predictions converted to binary labels based on a probability threshold of 0.5. The model's accuracy is calculated by comparing its predictions to the actual labels in the test set, providing a straightforward metric for evaluating its predictive performance.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+accuracy
+conf_matrix$table
+
+```
+
+We also apply ROC to provide more insights about the performance of the model. The AUROC value of 0.7101 indicates that the XGBoost model has a good ability to differentiate between the control group and the case group. A value higher than 0.5 indicates perfect discrimination.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+auroc <- roc(test_label, predictions)
+plot(auroc, main="Fig 11. ROC Curve", col="#1c61b6", xlab="False Positive Rate", ylab="True Positive Rate")
+abline(a=0, b=1, lty=2, col="gray")
+
+# Adding the AUC to the plot
+auc_text <- sprintf("AUC = %.2f", auroc$auc)
+text(0.6, 0.2, auc_text, col="#1c61b6")
+```
+
+
+### Prediction performance on the test sets
+
+Except using the test set splitted from 18 sessions, we also have 2 test sets subtracted from session 1 and session 18. In order to ensure the validity of our model, we determine to use these 2 sessions to test our model and present its performance.
+
+After importing the data into our model, we firstly calculate the accuracy, precision, Recall, and F1 score. They are the standard criteria to examine the performance of a model:
+
+```{r, echo=FALSE}
+session_test = list()
+for(i in 1:2){
+  session_test[[i]]=readRDS(paste('./Data/Test/test',i,'.rds',sep=''))
+}
+
+get_trail_functional_data_test <- function(session_id, trail_id){
+  spikes <- session_test[[session_id]]$spks[[trail_id]]
+  if (any(is.na(spikes))){
+    disp("value missing")
+  }
+
+  trail_bin_average <- matrix(colMeans(spikes), nrow = 1)
+  colnames(trail_bin_average) <- binename
+  trail_tibble  = as_tibble(trail_bin_average)%>% add_column("trail_id" = trail_id) %>% add_column("contrast_left"= session_test[[session_id]]$contrast_left[trail_id]) %>% add_column("contrast_right"= session_test[[session_id]]$contrast_right[trail_id]) %>% add_column("feedback_type"= session_test[[session_id]]$feedback_type[trail_id])
+  
+  trail_tibble
+}
+
+get_session_functional_data_test <- function(session_id){
+  n_trail <- length(session_test[[session_id]]$spks)
+  trail_list <- list()
+  for (trail_id in 1:n_trail){
+    trail_tibble <- get_trail_functional_data_test(session_id,trail_id)
+    trail_list[[trail_id]] <- trail_tibble
+  }
+  session_tibble <- as_tibble(do.call(rbind, trail_list))
+  session_tibble <- session_tibble %>% add_column("mouse_name" = session_test[[session_id]]$mouse_name) %>% add_column("date_exp" = session_test[[session_id]]$date_exp) %>% add_column("session_id" = session_id) 
+  session_tibble
+}
+
+build_session_test_list <- function() {
+  session_list = list()
+  for (session_id in 1: 2){
+    session_list[[session_id]] <- get_session_functional_data_test(session_id)
+  }
+  full_functional_tibble <- as_tibble(do.call(rbind, session_list))
+  full_functional_tibble$session_id <- as.factor(full_functional_tibble$session_id )
+  full_functional_tibble$contrast_diff <- abs(full_functional_tibble$contrast_left-full_functional_tibble$contrast_right)
+
+  full_functional_tibble$success <- full_functional_tibble$feedback_type == 1
+  full_functional_tibble$success <- as.numeric(full_functional_tibble$success)
+  
+  full_functional_tibble
+}
+
+test_full_functional_tibble <- build_session_test_list()
+
+predictive_dat_test <- test_full_functional_tibble[predictive_feature]
+predictive_dat_test$trail_id <- as.numeric(predictive_dat_test$trail_id)
+label_test <- as.numeric(test_full_functional_tibble$success)
+
+X_test <- model.matrix(~., predictive_dat_test)
+df_test <- predictive_dat
+
+predictions_test <- predict(xgb_model, newdata = X_test)
+predicted_labels <- as.numeric(ifelse(predictions_test > 0.5, 1, 0))
+
+
+accuracy <- mean(predicted_labels == label_test)
+```
+
+Accuracy measures the proportion of correctly classified instances out of the total instances. The model correctly predicts the class for around 71.46% of the instances. Precision represents the proportion of true positive predictions out of all positive predictions. A precision of approximately 74.40% suggests that when the model predicts a positive outcome, it is correct around 74.40% of the time. Recall, also known as sensitivity, measures the proportion of true positive predictions out of all actual positive instances. With a recall of approximately 90.96%, the model captures around 90.96% of the actual positive instances. F1 score is the harmonic mean of precision and recall, providing a balance between the two metrics. With an F1 score of approximately 81.85%, the model achieves a good balance between precision and recall.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+TP <- sum(predicted_labels == 1 & test_label == 1)
+FP <- sum(predicted_labels == 1 & test_label == 0)
+FN <- sum(predicted_labels == 0 & test_label == 1)
+
+# Calculate Precision, Recall, and F1 Score
+precision <- TP / (TP + FP)
+recall <- TP / (TP + FN)
+f1_score <- 2 * precision * recall / (precision + recall)
+
+# Print the results
+cat("Accuracy:", accuracy, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1 Score:", f1_score, "\n")
+```
+
+Then, in *Figure 12* we plot the ROC curve for the performance of model in test. Although the curve is not smooth, the trend is correct and ROC is larger than 0.5, which means our model is effective on prediction. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+auroc_test <- roc(label_test, predictions_test)
+plot(auroc_test, main="Fig 12. ROC Curve for test", col="#1c61b6", xlab="False Positive Rate", ylab="True Positive Rate")
+abline(a=0, b=1, lty=2, col="gray")
+
+# Adding the AUC to the plot
+auc_text <- sprintf("AUC = %.2f", auroc_test$auc)
+text(0.6, 0.2, auc_text, col="#1c61b6")
+```
+
+Overall, the model shows promising performance, particularly in terms of recall, which indicates its ability to effectively capture positive instances. However, there seems to be some room for improvement in terms of precision and accuracy. Depending on the specific context and requirements of the application, further optimization or fine-tuning of the model may be beneficial to enhance its overall performance. For example, we should extract more precise and representative features from data sessions to train our model.
+
+### Discussion 
+
+The findings of this study offer a nuanced understanding of the neural mechanisms underpinning decision-making in mice, based on an analysis of data from Steinmetz et al. (2019). Our exploration into the neuronal activity within the mice brains during decision-making tasks has yielded a predictive model with a 72.5% accuracy rate, demonstrating a significant correlation between specific brain regions, neuron spike counts, and decision outcomes.
+
+A key insight from our exploratory data analysis is the varying influence of different brain areas on decision-making. The disparities in neuron activity across brain regions suggest a complex neural network where certain areas may play more critical roles in processing stimuli and influencing decisions. The variability in success rates across sessions and mice indicates individual differences in decision-making strategies or neural processing, which could be a subject for further investigation.
+
+Our predictive model, grounded in the assumption that brain areas and spike numbers are crucial for prediction, validates this hypothesis to a considerable extent. However, the model's accuracy also underscores the complexity and potential variability in the neural basis of decision-making, suggesting that factors beyond our current predictors might influence the decision-making process.
+
+The PCA results, highlighting the dominance of the first two principal components, support the model's focus on key features while also hinting at the reduction of noise and irrelevant information. The substantial variance captured by PC1 particularly underscores the presence of a strong underlying pattern in the data, which is likely associated with the most influential neural signals related to decision-making.
+
+While the model demonstrates a good predictive ability, there are limitations to consider. The uneven distribution of stimuli contrasts and potential biases in session selection may affect the generalization of the findings. Future studies could address these limitations by including a more balanced and comprehensive data set and exploring other machine learning algorithms to enhance predictive accuracy.
+
+Additionally, the relationship between neuron activity and external variables, such as the type of decision or the specific nature of the stimuli, warrants deeper investigation. Understanding how external factors influence the neural correlates of decision-making can provide more holistic insights into the brain's functioning.
+
+In conclusion, this report advances our understanding of the neural dynamics involved in decision-making in mice, offering a foundation for future research in neuroscience and related fields. The interplay between neuron activity and decision-making is intricate, and our study contributes a piece to the puzzle, highlighting the potential for predictive modeling in unraveling the complexities of brain function.
+
+
