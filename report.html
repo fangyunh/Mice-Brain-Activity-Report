@@ -377,7 +377,7 @@ capture the most variance. The culmination of our analysis is a
 predictive model that achieves a 72.5% accuracy rate in forecasting the
 mice’s decisions, offering insights into the neural underpinnings of
 decision-making processes in mice and potentially broadening our
-understanding of brain functionality.</p>
+understanding of brain functionality. Our code is open at: <a href="https://github.com/fangyunh/Mice-Brain-Activity-Report" class="uri">https://github.com/fangyunh/Mice-Brain-Activity-Report</a></p>
 </div>
 <div id="introduction" class="section level3">
 <h3>Introduction</h3>
@@ -871,12 +871,6 @@ the model captures around 90.96% of the actual positive instances. F1
 score is the harmonic mean of precision and recall, providing a balance
 between the two metrics. With an F1 score of approximately 81.85%, the
 model achieves a good balance between precision and recall.</p>
-<pre><code>## Warning in predicted_labels == 1 &amp; test_label == 1: longer object length is not
-## a multiple of shorter object length</code></pre>
-<pre><code>## Warning in predicted_labels == 1 &amp; test_label == 0: longer object length is not
-## a multiple of shorter object length</code></pre>
-<pre><code>## Warning in predicted_labels == 0 &amp; test_label == 1: longer object length is not
-## a multiple of shorter object length</code></pre>
 <pre><code>## Accuracy: 0.725</code></pre>
 <pre><code>## Precision: 0.7043189</code></pre>
 <pre><code>## Recall: 0.8845619</code></pre>
@@ -925,7 +919,6 @@ substantial variance captured by PC1 particularly underscores the
 presence of a strong underlying pattern in the data, which is likely
 associated with the most influential neural signals related to
 decision-making.</p>
-<p>Limitations and Future Directions:</p>
 <p>While the model demonstrates a good predictive ability, there are
 limitations to consider. The uneven distribution of stimuli contrasts
 and potential biases in session selection may affect the generalization
